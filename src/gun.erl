@@ -777,7 +777,8 @@ ws_loop(State=#state{parent=Parent, owner=Owner, socket=Socket,
 				"Operations are restricted to the owner of the connection."}},
 			ws_loop(State);
 		Any ->
-			error_logger:error_msg("Unexpected message: ~w~n", [Any])
+			error_logger:error_msg("Unexpected message: ~w~n", [Any]),
+			ws_loop(State)
 	end.
 
 system_continue(_, _, {retry_loop, State, Retry}) ->
