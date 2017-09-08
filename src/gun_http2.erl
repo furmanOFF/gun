@@ -74,6 +74,8 @@ check_options(Opts) ->
 
 do_check_options([]) ->
 	ok;
+do_check_options([{keepalive, infinity}|Opts]) ->
+	do_check_options(Opts);
 do_check_options([{keepalive, K}|Opts]) when is_integer(K), K > 0 ->
 	do_check_options(Opts);
 do_check_options([Opt={content_handlers, Handlers}|Opts]) ->
@@ -101,18 +103,21 @@ init(Owner, Socket, Transport, Opts) ->
 handle(Data, State=#http2_state{buffer=Buffer}) ->
 	parse(<< Buffer/binary, Data/binary >>, State#http2_state{buffer= <<>>}).
 
-parse(Data0, State=#http2_state{buffer=Buffer}) ->
+parse(Data0, State0=#http2_state{buffer=Buffer}) ->
 	%% @todo Parse states: Preface. Continuation.
 	Data = << Buffer/binary, Data0/binary >>,
 	case cow_http2:parse(Data) of
 		{ok, Frame, Rest} ->
-			parse(Rest, frame(Frame, State));
+			case frame(Frame, State0) of
+				close -> close;
+				State1 -> parse(Rest, State1)
+			end;
 		{stream_error, StreamID, Reason, Human, Rest} ->
-			parse(Rest, stream_reset(State, StreamID, {stream_error, Reason, Human}));
+			parse(Rest, stream_reset(State0, StreamID, {stream_error, Reason, Human}));
 		Error = {connection_error, _, _} ->
-			terminate(State, Error);
+			terminate(State0, Error);
 		more ->
-			State#http2_state{buffer=Data}
+			State0#http2_state{buffer=Data}
 	end.
 
 %% DATA frame.

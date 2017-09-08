@@ -25,7 +25,7 @@ connect_timeout(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => 1000, retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			ok
 	after 5000 ->
 		error(timeout)
@@ -36,7 +36,7 @@ connect_timeout_infinity(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{connect_timeout => infinity, retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			ok
 	after 5000 ->
 		error(timeout)
@@ -57,7 +57,36 @@ detect_owner_gone(_) ->
 	end,
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {owner_gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{owner_gone, _}, _}} ->
+			ok
+	after 1000 ->
+		true = erlang:is_process_alive(Pid),
+		error(timeout)
+	end.
+
+detect_owner_gone_ws(_) ->
+	Self = self(),
+	spawn(fun() ->
+		{ok, ConnPid} = gun:open("echo.websocket.org", 80),
+		Self ! {conn, ConnPid},
+		gun:await_up(ConnPid),
+		gun:ws_upgrade(ConnPid, "/", []),
+		receive
+			{gun_ws_upgrade, Pid, ok, _} ->
+				ok
+		after 1000 ->
+			error(timeout)
+		end
+	end),
+	Pid = receive
+		{conn, C} ->
+			C
+	after 1000 ->
+		error(timeout)
+	end,
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {{owner_gone, _}, _}} ->
 			ok
 	after 1000 ->
 		true = erlang:is_process_alive(Pid),
@@ -69,7 +98,7 @@ gone_reason(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, econnrefused}} ->
+		{'DOWN', Ref, process, Pid, {{gone, econnrefused}, _}} ->
 			ok
 	after 200 ->
 		error(timeout)
@@ -80,6 +109,20 @@ info(_) ->
 	{ok, Pid} = gun:open("google.com", 443),
 	#{sock_ip := _, sock_port := _} = gun:info(Pid),
 	ok.
+
+keepalive_infinity(_) ->
+	doc("Ensure infinity for keepalive is accepted by all protocols."),
+	{ok, Pid} = gun:open("localhost", 12345, #{
+		http_opts => #{keepalive => infinity},
+		http2_opts => #{keepalive => infinity},
+		retry => 0}),
+	Ref = monitor(process, Pid),
+	receive
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
+			ok
+	after 5000 ->
+		error(timeout)
+	end.
 
 reply_to(_) ->
 	doc("The reply_to option allows using a separate process for requests."),
@@ -112,7 +155,7 @@ retry_0(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 0, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			ok
 	after 200 ->
 		error(timeout)
@@ -123,7 +166,7 @@ retry_1(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 500}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			ok
 	after 700 ->
 		error(timeout)
@@ -134,13 +177,13 @@ retry_timeout(_) ->
 	{ok, Pid} = gun:open("localhost", 12345, #{retry => 1, retry_timeout => 1000}),
 	Ref = monitor(process, Pid),
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			error(gone_too_early)
 	after 800 ->
 		ok
 	end,
 	receive
-		{'DOWN', Ref, process, Pid, {gone, _}} ->
+		{'DOWN', Ref, process, Pid, {{gone, _}, _}} ->
 			ok
 	after 400 ->
 		error(gone_too_late)
