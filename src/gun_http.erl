@@ -218,7 +218,7 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 					case IsFin of
 						fin -> undefined;
 						nofin ->
-							gun_content_handler:init(ReplyTo, StreamRef2,
+							gun_content_handler:init(ReplyTo, stream_ref(StreamRef),
 								Status, Headers, Handlers0)
 					end
 			end,
