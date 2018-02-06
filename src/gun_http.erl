@@ -218,7 +218,7 @@ handle_head(Data, State=#http_state{version=ClientVersion,
 					case IsFin of
 						fin -> undefined;
 						nofin ->
-							gun_content_handler:init(ReplyTo, stream_ref(StreamRef),
+							gun_content_handler:init(ReplyTo, StreamRef,
 								Status, Headers, Handlers0)
 					end
 			end,
@@ -420,7 +420,7 @@ request_io_from_headers(Headers) ->
 
 response_io_from_headers(<<"HEAD">>, _, _, _) ->
 	head;
-response_io_from_headers(_, _, 204, _) ->
+response_io_from_headers(_, _, Status, _) when (Status =:= 204) or (Status =:= 304) ->
 	head;
 response_io_from_headers(_, Version, _Status, Headers) ->
 	case lists:keyfind(<<"content-length">>, 1, Headers) of
@@ -455,10 +455,10 @@ is_stream(#http_state{streams=Streams}, StreamRef) ->
 cancel_stream(State=#http_state{streams=Streams}, StreamRef) ->
 	Streams2 = [case Ref of
 		StreamRef ->
-			S#stream{is_alive=false};
+			Tuple#stream{is_alive=false};
 		_ ->
-			S
-	end || S=#stream{ref=Ref} <- Streams],
+			Tuple
+	end || Tuple = #stream{ref=Ref} <- Streams],
 	State#http_state{streams=Streams2}.
 
 end_stream(State=#http_state{streams=[_|Tail]}) ->

@@ -17,6 +17,7 @@
 %% Connection.
 -export([open/2]).
 -export([open/3]).
+-export([open_unix/2]).
 -export([info/1]).
 -export([close/1]).
 -export([shutdown/1]).
@@ -132,6 +133,14 @@ open(Host, Port) ->
 -spec open(inet:hostname(), inet:port_number(), opts())
 	-> {ok, pid()} | {error, any()}.
 open(Host, Port, Opts) when is_list(Host); is_atom(Host) ->
+	do_open(Host, Port, Opts).
+
+-spec open_unix(Path::string(), opts())
+	-> {ok, pid()} | {error, any()}.
+open_unix(SocketPath, Opts) ->
+	do_open({local, SocketPath}, 0, Opts).
+
+do_open(Host, Port, Opts) ->
 	case check_options(maps:to_list(Opts)) of
 		ok ->
 			case supervisor:start_child(gun_sup, [self(), Host, Port, Opts]) of
@@ -450,6 +459,8 @@ flush_pid(ServerPid) ->
 			flush_pid(ServerPid);
 		{gun_down, ServerPid, _, _, _, _} ->
 			flush_pid(ServerPid);
+		{gun_inform, ServerPid, _, _, _} ->
+			flush_pid(ServerPid);
 		{gun_response, ServerPid, _, _, _, _} ->
 			flush_pid(ServerPid);
 		{gun_data, ServerPid, _, _, _} ->
@@ -472,6 +483,8 @@ flush_pid(ServerPid) ->
 
 flush_ref(StreamRef) ->
 	receive
+		{gun_inform, _, StreamRef, _, _} ->
+			flush_pid(StreamRef);
 		{gun_response, _, StreamRef, _, _, _} ->
 			flush_ref(StreamRef);
 		{gun_data, _, StreamRef, _, _} ->
@@ -601,7 +614,7 @@ down(State=#state{owner=Owner, opts=Opts, protocol=Protocol, protocol_state=Prot
 		last_error=Reason}, maps:get(retry, Opts, 5)).
 
 retry(#state{last_error=Reason}, 0) ->
-	error({gone, Reason});
+	exit({shutdown, Reason});
 retry(State=#state{keepalive_ref=KeepaliveRef}, Retries) when is_reference(KeepaliveRef) ->
 	_ = erlang:cancel_timer(KeepaliveRef),
 	%% Flush if we have a keepalive message
@@ -785,6 +798,7 @@ ws_loop(State=#state{parent=Parent, owner=Owner, owner_ref=OwnerRef, socket=Sock
 			ws_loop(State)
 	end.
 
+-spec owner_gone(_) -> no_return().
 owner_gone(normal) -> exit(normal);
 owner_gone(shutdown) -> exit(shutdown);
 owner_gone(Shutdown = {shutdown, _}) -> exit(Shutdown);
