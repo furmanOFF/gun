@@ -571,8 +571,9 @@ init(Parent, Owner, Host, Port, Opts) ->
 		tcp -> ranch_tcp;
 		ssl -> ranch_ssl
 	end,
-	Proxy = case maps:get(proxy, Opts) of
-		socks5 -> gun_socks5
+	Proxy = case maps:get(proxy, Opts, undefined) of
+		socks5 -> gun_socks5;
+		_ -> undefined
 	end,
 	OwnerRef = monitor(process, Owner),
 	connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
