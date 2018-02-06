@@ -118,6 +118,7 @@
 	keepalive_ref :: undefined | reference(),
 	socket :: undefined | inet:socket() | ssl:sslsocket(),
 	transport :: module(),
+	proxy :: module(),
 	protocol :: module(),
 	protocol_state :: any(),
 	last_error :: any()
@@ -201,6 +202,15 @@ check_options([{transport_opts, L}|Opts]) when is_list(L) ->
 check_options([{ws_opts, ProtoOpts}|Opts]) when is_map(ProtoOpts) ->
 	case gun_ws:check_options(ProtoOpts) of
 		ok ->
+			check_options(Opts);
+		Error ->
+			Error
+	end;
+check_options([{proxy, Proxy} | Opts]) when Proxy =:= socks5 ->
+	check_options(Opts);
+check_options([{socks5_opts, SocksOpts} | Opts]) when is_map(SocksOpts) ->
+	case gun_socks5:check_options(SocksOpts) of
+		ok -> 
 			check_options(Opts);
 		Error ->
 			Error
@@ -561,14 +571,17 @@ init(Parent, Owner, Host, Port, Opts) ->
 		tcp -> ranch_tcp;
 		ssl -> ranch_ssl
 	end,
+	Proxy = case maps:get(proxy, Opts) of
+		socks5 -> gun_socks5
+	end,
 	OwnerRef = monitor(process, Owner),
 	connect(#state{parent=Parent, owner=Owner, owner_ref=OwnerRef,
-		host=Host, port=Port, opts=Opts, transport=Transport}, Retry).
+		host=Host, port=Port, opts=Opts, transport=Transport, proxy=Proxy}, Retry).
 
 default_transport(443) -> ssl;
 default_transport(_) -> tcp.
 
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_ssl}, Retries) ->
+connect(State=#state{opts=Opts, transport=ranch_ssl}, Retries) ->
 	Protocols = [case P of
 		http -> <<"http/1.1">>;
 		http2 -> <<"h2">>
@@ -577,7 +590,7 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{alpn_advertised_protocols, Protocols},
 		{client_preferred_next_protocols, {client, Protocols, <<"http/1.1">>}}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
+	case proxy_connect(TransportOpts, State) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case ssl:negotiated_protocol(Socket) of
 				{ok, <<"h2">>} -> {gun_http2, http2_opts};
@@ -587,10 +600,10 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport=ranch_
 		{error, Reason} ->
 			retry(State#state{last_error=Reason}, Retries)
 	end;
-connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retries) ->
+connect(State=#state{opts=Opts}, Retries) ->
 	TransportOpts = [binary, {active, false}
 		|maps:get(transport_opts, Opts, [])],
-	case Transport:connect(Host, Port, TransportOpts, maps:get(connect_timeout, Opts, infinity)) of
+	case proxy_connect(TransportOpts, State) of
 		{ok, Socket} ->
 			{Protocol, ProtoOptsKey} = case maps:get(protocols, Opts, [http]) of
 				[http] -> {gun_http, http_opts};
@@ -600,6 +613,27 @@ connect(State=#state{host=Host, port=Port, opts=Opts, transport=Transport}, Retr
 		{error, Reason} ->
 			retry(State#state{last_error=Reason}, Retries)
 	end.
+
+proxy_connect(TransportOpts, #state{host=Host, port=Port, opts=Opts, transport=Transport, proxy=gun_socks5}) ->
+	ProxyOpts = maps:get(socks5_opts, Opts),
+	Timeout = maps:get(connect_timeout, Opts, infinity),
+	case gun_socks5:connect(Host, Port, ProxyOpts, Timeout) of
+		{ok, Socket} when Transport =:= ranch_ssl ->
+			case ssl:connect(Socket, TransportOpts) of
+				{ok, SslSocket} ->
+				  	{ok, SslSocket};
+				Error ->
+				  	Error
+			end;
+		{ok, _}=Res ->
+			Res;
+		Error ->
+			Error
+	end;
+proxy_connect(TransportOpts, #state{host=Host, port=Port, opts=Opts, transport=Transport}) ->
+	Timeout = maps:get(connect_timeout, Opts, infinity),
+	Transport:connect(Host, Port, TransportOpts, Timeout).
+
 
 up(State=#state{owner=Owner, opts=Opts, transport=Transport}, Socket, Protocol, ProtoOptsKey) ->
 	ProtoOpts = maps:get(ProtoOptsKey, Opts, #{}),
